@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="sw">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b5c7a">
+<title>Ripoti Maji</title>
+<style>
+/* One-screen tool: status → big capture button → stamped preview → send */
+:root{
+  --bg:#f3f7f8; --card:#ffffff; --ink:#10242c; --muted:#5b707a;
+  --water:#0b5c7a; --water-ink:#ffffff; --ok:#1d7a46; --warn:#a15c00; --bad:#b3261e; --line:#d6e2e6;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0c181d; --card:#132830; --ink:#e6f0f3; --muted:#93a9b2;
+  --water:#39a7cf; --water-ink:#06222c; --ok:#5fd394; --warn:#f0b35a; --bad:#ff8a80; --line:#22404b; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--font)}
+main{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:16px;
+  padding-block:calc(16px + env(safe-area-inset-top,0px)) calc(24px + env(safe-area-inset-bottom,0px));
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:1.35rem;margin:0;text-wrap:balance}
+.sub{color:var(--muted);margin:2px 0 0;font-size:.92rem}
+.gps{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:.95rem}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--warn);flex:none}
+.gps.ok .dot{background:var(--ok)} .gps.bad .dot{background:var(--bad)}
+.gps small{display:block;color:var(--muted);font-variant-numeric:tabular-nums}
+.big{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  width:100%;min-height:170px;border:0;border-radius:18px;background:var(--water);color:var(--water-ink);
+  font:700 1.3rem var(--font);cursor:pointer}
+.big span{font-weight:500;font-size:.9rem;opacity:.9}
+.big:focus-visible,button:focus-visible,textarea:focus-visible{outline:3px solid var(--warn);outline-offset:2px}
+#preview img{width:100%;border-radius:12px;display:block}
+label{font-weight:600;font-size:.9rem}
+textarea{width:100%;min-height:70px;border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;background:var(--card);color:var(--ink)}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.btn{flex:1 1 140px;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:600 1rem var(--font);cursor:pointer;text-align:center;text-decoration:none}
+.btn.primary{background:var(--ok);border-color:var(--ok);color:#fff}
+.msg{font-size:.92rem;color:var(--muted)}
+.msg.err{color:var(--bad)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Ripoti uvujaji wa maji</h1>
+    <p class="sub">Piga picha tu. Mahali, saa na tarehe vinaongezwa kwenye picha yenyewe.</p>
+  </header>
+
+  <div class="gps" id="gps"><div class="dot"></div><div><b id="gpsTitle">Inatafuta mahali (GPS)…</b><small id="gpsDetail">Ruhusu "Location" ikiulizwa.</small></div></div>
+
+  <button class="big" id="shoot" type="button">📷 Piga picha ya uvujaji<span>Take a photo of the leak</span></button>
+  <input id="cam" type="file" accept="image/*" capture="environment" hidden>
+
+  <section id="preview" hidden>
+    <img id="out" alt="Picha ya uvujaji yenye mahali na muda">
+  </section>
+
+  <section id="details" hidden style="display:flex;flex-direction:column;gap:8px">
+    <label for="note">Maelezo (si lazima)</label>
+    <textarea id="note" placeholder="Mf. Bomba kubwa linamwaga maji mengi karibu na msikiti"></textarea>
+    <div class="row">
+      <button class="btn primary" id="send" type="button">Tuma ripoti</button>
+      <button class="btn" id="again" type="button">Piga upya</button>
+    </div>
+    <p class="msg" id="msg"></p>
+  </section>
+</main>
+
+<script>
+/* ===== SETTINGS: put the water authority's WhatsApp number here (country code, no +), e.g. "2557XXXXXXXX".
+   Leave empty to let the reporter choose who to send to. ===== */
+const REPORT_WHATSAPP = "";
+
+const $ = id => document.getElementById(id);
+let fix = null, blob = null;
+
+/* 1. Start GPS as soon as the page opens, keep the most accurate reading */
+function startGPS(){
+  if(!("geolocation" in navigator)){ gpsState("bad","Simu hii haina GPS kwenye kivinjari","Andika mahali kwenye maelezo."); return; }
+  navigator.geolocation.watchPosition(p=>{
+    const c=p.coords;
+    if(!fix || c.accuracy<=fix.acc || Date.now()-fix.t>30000)
+      fix={lat:c.latitude,lng:c.longitude,acc:Math.round(c.accuracy),t:Date.now()};
+    gpsState(fix.acc<=30?"ok":"", fix.acc<=30?"Mahali pamepatikana":"Inaboresha usahihi…",
+      `${fix.lat.toFixed(6)}, ${fix.lng.toFixed(6)} · ±${fix.acc} m`);
+  },e=>{
+    gpsState("bad", e.code===1?"Location imezuiwa":"GPS haipatikani",
+      e.code===1?"Washa Location kwa kivinjari hiki kwenye Settings, kisha fungua ukurasa upya.":"Nenda nje kidogo au subiri sekunde chache.");
+  },{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+}
+function gpsState(cls,title,detail){ $("gps").className="gps "+cls; $("gpsTitle").textContent=title; $("gpsDetail").textContent=detail; }
+
+/* 2. Take photo */
+$("shoot").onclick = ()=> $("cam").click();
+$("again").onclick = ()=> { $("cam").value=""; $("cam").click(); };
+$("cam").onchange = async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const img=new Image(); img.src=URL.createObjectURL(f); await img.decode();
+  const at=new Date(), here=fix;  // location at the moment of the shot
+  await stamp(img, here, at);
+  $("preview").hidden=false; $("details").hidden=false; $("details").style.display="flex";
+  $("msg").className="msg";
+  $("msg").textContent = here ? "" : "Hakuna GPS bado. Andika mahali (mtaa, alama ya karibu) kwenye maelezo.";
+  window.scrollTo({top:0,behavior:"smooth"});
+};
+
+/* 3. Burn location + time into the picture, so it survives WhatsApp stripping the hidden data */
+function stamp(img, here, at){
+  const max=1600, s=Math.min(1, max/Math.max(img.naturalWidth,img.naturalHeight));
+  const w=Math.round(img.naturalWidth*s), h=Math.round(img.naturalHeight*s);
+  const band=Math.round(w*0.15), cv=document.createElement("canvas");
+  cv.width=w; cv.height=h+band; const g=cv.getContext("2d");
+  g.drawImage(img,0,0,w,h);
+  g.fillStyle="#0b3a4d"; g.fillRect(0,h,w,band);
+  g.fillStyle="#fff"; const fs=Math.round(band*0.22); g.font=`700 ${fs}px system-ui,sans-serif`;
+  const pad=Math.round(w*0.03);
+  g.fillText(here?`📍 ${here.lat.toFixed(6)}, ${here.lng.toFixed(6)}  (±${here.acc} m)`:"📍 Mahali: hakuna GPS", pad, h+band*0.36);
+  g.font=`500 ${Math.round(fs*0.85)}px system-ui,sans-serif`;
+  g.fillText(`🕒 ${at.toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"})}  ·  Ripoti ya uvujaji wa maji`, pad, h+band*0.72);
+  $("out").src=cv.toDataURL("image/jpeg",0.85);
+  current={here,at};
+  return new Promise(r=>cv.toBlob(b=>{blob=b;r();},"image/jpeg",0.85));
+}
+let current={};
+
+/* 4. Send: share sheet with photo + map link (WhatsApp, SMS, email…) */
+function reportText(){
+  const {here,at}=current, note=$("note").value.trim();
+  return ["🚰 RIPOTI: Uvujaji wa maji",
+    here?`Mahali: https://maps.google.com/?q=${here.lat.toFixed(6)},${here.lng.toFixed(6)} (±${here.acc} m)`:"Mahali: (tazama maelezo)",
+    `Muda: ${at.toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"})}`,
+    note?`Maelezo: ${note}`:""].filter(Boolean).join("\n");
+}
+$("send").onclick = async ()=>{
+  const text=reportText(), file=new File([blob],`uvujaji-${Date.now()}.jpg`,{type:"image/jpeg"});
+  try{
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], text, title:"Ripoti ya uvujaji wa maji"});
+      $("msg").textContent="Asante! Ripoti imefunguliwa kwenye programu uliyochagua.";
+      return;
+    }
+  }catch(e){ if(e.name==="AbortError") return; }
+  // Fallback: save the stamped photo + open WhatsApp with the text
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=file.name; a.click();
+  location.href=`https://wa.me/${REPORT_WHATSAPP}?text=${encodeURIComponent(text)}`;
+};
+
+startGPS();
+</script>
+</body>
+</html>
