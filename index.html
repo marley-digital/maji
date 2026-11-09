@@ -37,6 +37,9 @@ textarea{width:100%;min-height:70px;border:1px solid var(--line);border-radius:1
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .btn{flex:1 1 140px;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:600 1rem var(--font);cursor:pointer;text-align:center;text-decoration:none}
 .btn.primary{background:var(--ok);border-color:var(--ok);color:#fff}
+.help{background:var(--card);border:1px solid var(--bad);border-radius:12px;padding:12px 14px;font-size:.93rem}
+.help ol{margin:8px 0;padding-left:20px;display:grid;gap:6px}
+.help p{margin:0;color:var(--muted)}
 .msg{font-size:.92rem;color:var(--muted)}
 .msg.err{color:var(--bad)}
 [hidden]{display:none!important}
@@ -49,9 +52,23 @@ textarea{width:100%;min-height:70px;border:1px solid var(--line);border-radius:1
     <p class="sub">Piga picha tu. Mahali, saa na tarehe vinaongezwa kwenye picha yenyewe.</p>
   </header>
 
-  <div class="gps" id="gps"><div class="dot"></div><div><b id="gpsTitle">Inatafuta mahali (GPS)…</b><small id="gpsDetail">Ruhusu "Location" ikiulizwa.</small></div></div>
+  <div class="gps" id="gps"><div class="dot"></div><div><b id="gpsTitle">Mahali bado hapajawashwa</b><small id="gpsDetail">Hatua ya 1: washa mahali. Hatua ya 2: piga picha.</small></div></div>
 
-  <button class="big" id="shoot" type="button">📷 Piga picha ya uvujaji<span>Take a photo of the leak</span></button>
+  <button class="big" id="allow" type="button">📍 Washa mahali (Location)<span>Bonyeza, kisha chagua "Allow"</span></button>
+
+  <section class="help" id="help" hidden>
+    <b>Location imezuiwa kwenye iPhone hii. Iwashe hivi:</b>
+    <ol>
+      <li>Fungua <b>Settings → Privacy &amp; Security → Location Services</b> na hakikisha iko <b>ON</b>.</li>
+      <li>Shuka chini, gusa <b>Safari Websites</b>, chagua <b>While Using the App</b>.</li>
+      <li>Rudi hapa Safari, gusa <b>aA</b> (kushoto juu ya anwani) → <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>.</li>
+      <li>Fungua ukurasa upya, kisha bonyeza "Washa mahali" tena.</li>
+    </ol>
+    <p>Kama ulifungua link ndani ya WhatsApp au Instagram, ifungue kwenye <b>Safari</b> badala yake.</p>
+  </section>
+
+  <button class="big" id="shoot" type="button" hidden>📷 Piga picha ya uvujaji<span>Take a photo of the leak</span></button>
+  <button class="btn" id="skip" type="button">Endelea bila GPS (nitaandika mahali)</button>
   <input id="cam" type="file" accept="image/*" capture="environment" hidden>
 
   <section id="preview" hidden>
@@ -77,19 +94,40 @@ const REPORT_WHATSAPP = "";
 const $ = id => document.getElementById(id);
 let fix = null, blob = null;
 
-/* 1. Start GPS as soon as the page opens, keep the most accurate reading */
+/* 1. Ask for location when the person taps "Washa mahali" (iPhone shows its Allow popup), then keep the most accurate reading */
+let watching=false;
+function showCamera(){ $("allow").hidden=true; $("help").hidden=true; $("skip").hidden=true; $("shoot").hidden=false; }
 function startGPS(){
-  if(!("geolocation" in navigator)){ gpsState("bad","Simu hii haina GPS kwenye kivinjari","Andika mahali kwenye maelezo."); return; }
+  if(!("geolocation" in navigator)){ gpsState("bad","Kivinjari hiki hakina GPS","Andika mahali kwenye maelezo."); return; }
+  if(!window.isSecureContext){ gpsState("bad","Ukurasa si salama (http)","Fungua link inayoanza na https://"); return; }
+  if(watching) return; watching=true;
+  gpsState("","Inasubiri ruhusa…","Chagua \"Allow\" kwenye ujumbe wa iPhone.");
   navigator.geolocation.watchPosition(p=>{
     const c=p.coords;
     if(!fix || c.accuracy<=fix.acc || Date.now()-fix.t>30000)
       fix={lat:c.latitude,lng:c.longitude,acc:Math.round(c.accuracy),t:Date.now()};
-    gpsState(fix.acc<=30?"ok":"", fix.acc<=30?"Mahali pamepatikana":"Inaboresha usahihi…",
+    gpsState(fix.acc<=30?"ok":"", fix.acc<=30?"Mahali pamepatikana ✓":"Inaboresha usahihi…",
       `${fix.lat.toFixed(6)}, ${fix.lng.toFixed(6)} · ±${fix.acc} m`);
+    showCamera();
   },e=>{
-    gpsState("bad", e.code===1?"Location imezuiwa":"GPS haipatikani",
-      e.code===1?"Washa Location kwa kivinjari hiki kwenye Settings, kisha fungua ukurasa upya.":"Nenda nje kidogo au subiri sekunde chache.");
+    watching=false;
+    if(e.code===1){
+      gpsState("bad","Location imezuiwa","Fuata hatua hapa chini kuiwasha.");
+      $("help").hidden=false;
+    } else {
+      gpsState("bad","GPS haijapatikana bado","Hakikisha Location iko ON, nenda nje kidogo, kisha bonyeza tena.");
+    }
   },{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+}
+$("allow").onclick = startGPS;
+$("skip").onclick = showCamera;
+
+/* If permission was already given before, skip the button and start straight away */
+if(navigator.permissions && navigator.permissions.query){
+  navigator.permissions.query({name:"geolocation"}).then(s=>{
+    if(s.state==="granted") startGPS();
+    else if(s.state==="denied"){ gpsState("bad","Location imezuiwa","Fuata hatua hapa chini kuiwasha."); $("help").hidden=false; }
+  }).catch(()=>{});
 }
 function gpsState(cls,title,detail){ $("gps").className="gps "+cls; $("gpsTitle").textContent=title; $("gpsDetail").textContent=detail; }
 
@@ -148,7 +186,6 @@ $("send").onclick = async ()=>{
   location.href=`https://wa.me/${REPORT_WHATSAPP}?text=${encodeURIComponent(text)}`;
 };
 
-startGPS();
 </script>
 </body>
 </html>
